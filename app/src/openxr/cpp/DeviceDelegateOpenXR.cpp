@@ -47,6 +47,13 @@
 
 namespace crow {
 
+#if SPACES
+// Render resolution scale factor for METALENSE2 to improve frame rate.
+// The recommended resolution from the runtime may be too demanding for
+// the tethered phone's GPU given additional AR compositing overhead.
+static constexpr float kMetalense2ResolutionScale = 0.75f;
+#endif
+
 struct HandMeshPropertiesMSFT {
     uint32_t indexCount = 0;
     uint32_t vertexCount = 0;
@@ -462,7 +469,17 @@ struct DeviceDelegateOpenXR::State {
     CHECK(viewConfig.size() > 0);
 
     immersiveDisplay->SetDeviceName(systemProperties.systemName);
-    immersiveDisplay->SetEyeResolution(viewConfig.front().recommendedImageRectWidth, viewConfig.front().recommendedImageRectHeight);
+    uint32_t eyeWidth = viewConfig.front().recommendedImageRectWidth;
+    uint32_t eyeHeight = viewConfig.front().recommendedImageRectHeight;
+#if SPACES
+    // Match the scaled render resolution for METALENSE2 so WebXR reports
+    // the correct framebuffer dimensions.
+    if (deviceType == device::Metalense2) {
+        eyeWidth = static_cast<uint32_t>(eyeWidth * kMetalense2ResolutionScale);
+        eyeHeight = static_cast<uint32_t>(eyeHeight * kMetalense2ResolutionScale);
+    }
+#endif
+    immersiveDisplay->SetEyeResolution(eyeWidth, eyeHeight);
     immersiveDisplay->SetSittingToStandingTransform(vrb::Matrix::Translation(kAverageHeight));
     auto toDeviceBlendModes = [](std::vector<XrEnvironmentBlendMode> aOpenXRBlendModes) {
         std::vector<device::BlendMode> deviceBlendModes;
@@ -525,6 +542,14 @@ struct DeviceDelegateOpenXR::State {
     if (w == 0 || h == 0) {
       w = viewConfig.front().recommendedImageRectWidth;
       h = viewConfig.front().recommendedImageRectHeight;
+#if SPACES
+      // Scale down render resolution for METALENSE2 to improve frame rate.
+      if (deviceType == device::Metalense2) {
+          w = static_cast<uint32_t>(w * kMetalense2ResolutionScale);
+          h = static_cast<uint32_t>(h * kMetalense2ResolutionScale);
+          VRB_LOG("METALENSE2: Scaled render resolution to %ux%u (%.0f%%)", w, h, kMetalense2ResolutionScale * 100);
+      }
+#endif
     }
 
     XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
@@ -544,7 +569,14 @@ struct DeviceDelegateOpenXR::State {
     vrb::FBO::Attributes attributes;
     if (renderMode == device::RenderMode::StandAlone) {
       attributes.depth = true;
+#if SPACES
+      // Disable MSAA for Spaces AR devices to reduce GPU overhead.
+      // Tethered AR glasses have tighter GPU budgets due to blend mode
+      // compositing and hand tracking overhead.
+      attributes.samples = 0;
+#else
       attributes.samples = 4;
+#endif
     } else {
       attributes.depth = false;
       attributes.samples = 0;
@@ -727,6 +759,13 @@ struct DeviceDelegateOpenXR::State {
       if (!OpenXRExtensions::IsExtensionSupported(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
           return;
 
+#if SPACES
+      // Spaces AR devices (LenovoA3, METALENSE2) need higher performance levels even
+      // in standalone browsing mode. The overhead of AR blend modes plus hand tracking
+      // on tethered devices requires sustained high CPU/GPU performance.
+      CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
+      CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
+#else
       if (renderMode == device::RenderMode::StandAlone && minCPULevel == device::CPULevel::Normal) {
           CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_LOW_EXT));
           CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_LOW_EXT));
@@ -734,6 +773,7 @@ struct DeviceDelegateOpenXR::State {
           CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
           CHECK_XRCMD(OpenXRExtensions::sXrPerfSettingsSetPerformanceLevelEXT(session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
       }
+#endif
   }
 
   void UpdateDisplayRefreshRate() {
@@ -1477,6 +1517,14 @@ DeviceDelegateOpenXR::CreateLayerCube(int32_t aWidth, int32_t aHeight, GLint aIn
   if (!m.layersEnabled) {
     return nullptr;
   }
+  // Check if the runtime supports the requested cubemap swapchain format.
+  // Some runtimes (e.g. Snapdragon Spaces on METALENSE2) do not support compressed
+  // texture formats for swapchains. Gracefully skip the cubemap in that case.
+  // Only check when the session is already available (xrEnumerateSwapchainFormats requires it).
+  if (m.session != XR_NULL_HANDLE && !m.SupportsColorFormat(aInternalFormat)) {
+    VRB_WARN("Cubemap format 0x%x not supported by the runtime, skipping cube layer", (unsigned)aInternalFormat);
+    return nullptr;
+  }
   if (m.cubeLayer) {
     m.cubeLayer->Destroy();
   }
@@ -1699,7 +1747,16 @@ DeviceDelegateOpenXR::EnterVR(const crow::BrowserEGLContext& aEGLContext) {
     layer->Init(m.javaContext->env, m.session, context);
   }
   if (m.cubeLayer) {
-    m.cubeLayer->Init(m.javaContext->env, m.session, context);
+    // Check cubemap swapchain format support before initializing.
+    // Some runtimes (e.g. Snapdragon Spaces on METALENSE2) do not support
+    // compressed texture formats for swapchains.
+    if (m.cubeLayer->GetGlFormat() != 0 && !m.SupportsColorFormat(m.cubeLayer->GetGlFormat())) {
+      VRB_WARN("Cubemap format 0x%x not supported by the runtime, destroying cube layer", (unsigned)m.cubeLayer->GetGlFormat());
+      m.cubeLayer->Destroy();
+      m.cubeLayer = nullptr;
+    } else {
+      m.cubeLayer->Init(m.javaContext->env, m.session, context);
+    }
   }
   if (m.equirectLayer) {
     m.equirectLayer->Init(m.javaContext->env, m.session, context);

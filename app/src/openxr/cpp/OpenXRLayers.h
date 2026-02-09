@@ -389,6 +389,7 @@ public:
   void Update(XrSpace aSpace, const XrPosef &aReorientPose, XrSwapchain aClearSwapChain) override;
   void Destroy() override;
   bool IsLoaded() const;
+  GLint GetGlFormat() const { return glFormat; }
 
 protected:
   GLint glFormat;

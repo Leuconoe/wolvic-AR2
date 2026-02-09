@@ -54,6 +54,7 @@ void OpenXRExtensions::Initialize() {
 #elif SPACES
     // Spaces incorrectly advertises these extensions as supported but they don't really work.
     // We get no poses for aim/grip... and we get flooded by profiles change events.
+    // This applies to all Spaces devices including LenovoA3 and METALENSE2.
     sSupportedExtensions.erase(XR_EXT_HAND_INTERACTION_EXTENSION_NAME);
     sSupportedExtensions.erase(XR_MSFT_HAND_INTERACTION_EXTENSION_NAME);
 #endif

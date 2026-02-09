@@ -163,6 +163,7 @@ device::DeviceType DeviceUtils::GetDeviceTypeFromSystem() {
         deviceNamesMap.emplace("YVR 1", device::PfdmYVR1);
         deviceNamesMap.emplace("YVR 2", device::PfdmYVR2);
         deviceNamesMap.emplace("PFDM MR", device::PfdmMR);
+        deviceNamesMap.emplace("METALENSE2", device::Metalense2);
     }
 
     auto device = deviceNamesMap.find(model);

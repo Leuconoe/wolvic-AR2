@@ -548,9 +548,9 @@ bool OpenXRInputSource::GetHandTrackingInfo(XrTime predictedDisplayTime, XrSpace
     CHECK_XRCMD(OpenXRExtensions::sXrLocateHandJointsEXT(mHandTracker, &locateInfo, &jointLocations));
     mHasHandJoints = jointLocations.isActive;
 #if defined(SPACES)
-    // Bug in Spaces runtime, isActive returns always false, force it to true for the A3.
+    // Bug in Spaces runtime, isActive returns always false, force it to true for the A3 and METALENSE2.
     // https://gitlab.freedesktop.org/monado/monado/-/issues/263
-    if (mDeviceType == device::LenovoA3)
+    if (mDeviceType == device::LenovoA3 || mDeviceType == device::Metalense2)
         mHasHandJoints = true;
 #endif
 

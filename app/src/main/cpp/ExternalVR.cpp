@@ -280,6 +280,11 @@ mozilla::gfx::VRControllerType GetVRControllerTypeByDevice(device::DeviceType aT
     case device::PfdmMR:
       result = mozilla::gfx::VRControllerType::YvrTouch2;
       break;
+    case device::LenovoA3:
+    case device::Metalense2:
+      // FIXME: Gecko does not support these Spaces AR devices yet, use a similar one for WebXR.
+      result = mozilla::gfx::VRControllerType::OculusGo;
+      break;
     case device::UnknownType:
     default:
       result = mozilla::gfx::VRControllerType::_empty;

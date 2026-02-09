@@ -11,7 +11,7 @@ import com.igalia.wolvic.BuildConfig;
 
 public class DeviceType {
     // These values need to match those in Device.h
-    @IntDef(value = {Unknown, OculusGo, OculusQuest, ViveFocus, ViveFocusPlus, PicoNeo2, PicoG2, PicoNeo3, OculusQuest2, HVR3DoF, HVR6DoF, Pico4x, MetaQuestPro, LynxR1, LenovoA3, LenovoVRX, MagicLeap2, MetaQuest3, VisionGlass, Pico4U, PfdmYVR1, PfdmYVR2, PfdmMR})
+    @IntDef(value = {Unknown, OculusGo, OculusQuest, ViveFocus, ViveFocusPlus, PicoNeo2, PicoG2, PicoNeo3, OculusQuest2, HVR3DoF, HVR6DoF, Pico4x, MetaQuestPro, LynxR1, LenovoA3, LenovoVRX, MagicLeap2, MetaQuest3, VisionGlass, Pico4U, PfdmYVR1, PfdmYVR2, PfdmMR, Metalense2})
     public @interface Type {}
     public static final int Unknown = 0;
     public static final int OculusGo = 1;
@@ -36,6 +36,7 @@ public class DeviceType {
     public static final int PfdmYVR1 = 21;
     public static final int PfdmYVR2 = 22;
     public static final int PfdmMR = 23;
+    public static final int Metalense2 = 24;
 
     private static @Type int mType = Unknown;
     private static String mDeviceName = "Unknown Device";
@@ -98,6 +99,9 @@ public class DeviceType {
                 break;
             case PfdmMR:
                 mDeviceName = "PFDM MR";
+                break;
+            case Metalense2:
+                mDeviceName = "METALENSE2";
                 break;
             default:
                 mDeviceName = "Unknown Device";
@@ -177,6 +181,6 @@ public class DeviceType {
     }
 
     public static boolean isTetheredDevice() {
-        return mType == HVR3DoF || mType == HVR6DoF || mType == VisionGlass || mType == LenovoA3;
+        return mType == HVR3DoF || mType == HVR6DoF || mType == VisionGlass || mType == LenovoA3 || mType == Metalense2;
     }
 }
