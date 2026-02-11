@@ -51,7 +51,7 @@ namespace crow {
 // Render resolution scale factor for METALENSE2 to improve frame rate.
 // The recommended resolution from the runtime may be too demanding for
 // the tethered phone's GPU given additional AR compositing overhead.
-static constexpr float kMetalense2ResolutionScale = 0.75f;
+static constexpr float kMetalense2ResolutionScale = 1.0f;
 #endif
 
 struct HandMeshPropertiesMSFT {
@@ -317,6 +317,11 @@ struct DeviceDelegateOpenXR::State {
     VRB_LOG("OpenXR system name: %s", systemProperties.systemName);
 
     layersEnabled = systemProperties.graphicsProperties.maxLayerCount > 1 && OpenXRExtensions::IsExtensionSupported(XR_KHR_ANDROID_SURFACE_SWAPCHAIN_EXTENSION_NAME);
+#if SPACES
+    // Disable compositor layers on Spaces to reduce compositor overhead.
+    // All UI is rendered into the projection layer instead.
+    layersEnabled = false;
+#endif
     if (systemProperties.graphicsProperties.maxLayerCount == 0)
         VRB_ERROR("OpenXR runtime reports 0 layers. There must be at least 1");
 
@@ -560,7 +565,12 @@ struct DeviceDelegateOpenXR::State {
     info.mipCount = 1;
     info.faceCount = 1;
     info.arraySize = 1;
+#if SPACES
+    // Force sampleCount to 1 for tethered AR glasses to avoid multisampled swapchain overhead.
+    info.sampleCount = 1;
+#else
     info.sampleCount = viewConfig.front().recommendedSwapchainSampleCount;
+#endif
     info.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
     return info;
   }
@@ -1148,8 +1158,9 @@ DeviceDelegateOpenXR::StartFrame(const FramePrediction aPrediction) {
   }
 
   mShouldRender = frameState.shouldRender;
-  if (!frameState.shouldRender)
+  if (!frameState.shouldRender) {
     return;
+  }
 
   // Query head location
   XrSpaceLocation location {XR_TYPE_SPACE_LOCATION};

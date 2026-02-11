@@ -9,6 +9,7 @@
 #include "FadeAnimation.h"
 #include "Device.h"
 #include "DeviceDelegate.h"
+#include <chrono>
 #include "EngineSurfaceTexture.h"
 #include "ExternalBlitter.h"
 #include "ExternalVR.h"

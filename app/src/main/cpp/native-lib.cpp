@@ -186,8 +186,9 @@ android_main(android_app *aAppState) {
   jniEnv->DeleteLocalRef(assetManager);
 
   auto MaybeInitGLAndEnterVR = [aAppState]() {
-    if (!aAppState->window || !sAppContext->mEgl || BrowserWorld::Instance().IsGLInitialized())
+    if (!aAppState->window || !sAppContext->mEgl || BrowserWorld::Instance().IsGLInitialized()) {
       return;
+    }
 
     BrowserWorld::Instance().InitializeGL();
     sAppContext->mDevice->EnterVR(*sAppContext->mEgl);

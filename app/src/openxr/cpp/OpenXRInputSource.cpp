@@ -791,6 +791,12 @@ void OpenXRInputSource::Update(const XrFrameState& frameState, XrSpace localSpac
     // Pico does continuously track the controllers even when left alone. That's why we return
     // always true so that we always check hand tracking just in case (unless it's disabled).
     bool mustAlwaysCheckHandTracking = handTrackingEnabled;
+#elif defined(SPACES)
+    // Spaces AR glasses (LenovoA3, METALENSE2) rely on hand tracking as the primary input.
+    // The KHR Simple controller profile may report valid aim poses from the tethered phone,
+    // which would cause hand tracking to be skipped if we only check isControllerUnavailable.
+    // Force hand tracking to always be checked so hand joints update every frame.
+    bool mustAlwaysCheckHandTracking = handTrackingEnabled;
 #else
     bool mustAlwaysCheckHandTracking = false;
 #endif
