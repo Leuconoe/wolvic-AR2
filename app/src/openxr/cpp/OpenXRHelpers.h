@@ -110,14 +110,10 @@ typedef std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> HandJointsAr
 inline bool IsHandJointPositionValid(const enum XrHandJointEXT aJoint, const HandJointsArray& handJoints) {
     if (aJoint >= handJoints.size())
         return false;
-#if SPACES
-    // A bug in spaces leaves the locationFlags always empty. The best we can do is to check that
-    // all positions are not 0.0 (which is what the runtime returns when they aren't tracked).
-    // https://gitlab.freedesktop.org/monado/monado/-/issues/264
-    auto pose = handJoints[aJoint].pose;
-    return pose.position.x != 0.0 && pose.position.y != 0.0 && pose.position.z != 0.0;
-#endif
-    return (handJoints[aJoint].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+    // On SPACES, the runtime might report joints relative to head (0,0,0).
+    // We trust the locationFlags and the forced isActive flag in GetHandTrackingInfo.
+    return (handJoints[aJoint].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 || 
+           (handJoints[aJoint].pose.position.x != 0.0f || handJoints[aJoint].pose.position.y != 0.0f);
 }
 
 inline XrEnvironmentBlendMode toOpenXRBlendMode(device::BlendMode blendMode) {

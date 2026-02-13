@@ -77,6 +77,7 @@ private:
     std::vector<float> axesContainer;
     crow::ElbowModelPtr elbow;
     XrHandTrackerEXT mHandTracker { XR_NULL_HANDLE };
+    XrSpace mHandTrackingSpace { XR_NULL_HANDLE };
     HandJointsArray mHandJoints;
     bool mHasHandJoints { false };
     bool mSupportsFBHandTrackingAim { false };

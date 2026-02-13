@@ -135,39 +135,63 @@ OpenXRGestureManagerHandJoints::hasAim() const {
 XrPosef
 OpenXRGestureManagerHandJoints::aimPose(const XrTime predictedDisplayTime, const OpenXRHandFlags handeness, const vrb::Matrix& head) const {
     ASSERT(hasAim());
+
+    // Ray origin is Index Proximal
+    auto aimPose = mHandJoints[XR_HAND_JOINT_INDEX_PROXIMAL_EXT].pose;
+    vrb::Vector proximalPos(aimPose.position.x, aimPose.position.y, aimPose.position.z);
+    
+    // Filtering for position
+    float* filteredPos = mOneEuroFilterPosition ? mOneEuroFilterPosition->filter(predictedDisplayTime, proximalPos.Data()) : proximalPos.Data();
+    aimPose.position = { filteredPos[0], filteredPos[1], filteredPos[2] };
+
     auto lookAt = [](const vrb::Vector& sourcePoint, const vrb::Vector& destPoint) -> vrb::Quaternion {
         const float EPSILON = 0.000001f;
         vrb::Vector worldForward = { 0, 0, 1 };
         vrb::Vector forwardVector = (destPoint - sourcePoint).Normalize();
         float dot = worldForward.Dot(forwardVector);
-
-        // Vectors pointing to opposite directions -> 180 turn around up direction.
-        if (abs(dot - (-1.0f)) < EPSILON) {
-            return {0, 1, 0, M_PI };
-        }
-        // Vectors pointing in the same direction -> identity quaternion (no rotation)
-        if (abs(dot - (1.0f)) < EPSILON) {
-            return {0, 0, 0, 1 };
-        }
-
+        if (abs(dot - (-1.0f)) < EPSILON) return {0, 1, 0, M_PI };
+        if (abs(dot - (1.0f)) < EPSILON) return {0, 0, 0, 1 };
         auto quaternionFromAxisAndAngle = [](const vrb::Vector& axis, float angle) -> vrb::Quaternion {
             float halfAngle = angle * .5f;
             float s = sin(halfAngle);
             return { axis.x() * s, axis.y() * s, axis.z() * s, cos(halfAngle) };
         };
-
         float rotationAngle = acos(dot);
         auto rotationAxis = worldForward.Cross(forwardVector);
         return quaternionFromAxisAndAngle(rotationAxis.Normalize(), rotationAngle);
     };
 
-    auto aimPose = mHandJoints[XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT].pose;
-    auto pos = vrb::Vector(aimPose.position.x, aimPose.position.y, aimPose.position.z);
-    float* filteredPos = mOneEuroFilterPosition ? mOneEuroFilterPosition->filter(predictedDisplayTime, pos.Data()) : pos.Data();
+    // Ray Direction: from Index Proximal towards Index Tip
+    vrb::Vector forwardDir;
+    vrb::Vector originPos = proximalPos;
+    if (IsHandJointPositionValid(XR_HAND_JOINT_INDEX_TIP_EXT, mHandJoints)) {
+        auto tPos = mHandJoints[XR_HAND_JOINT_INDEX_TIP_EXT].pose.position;
+        vrb::Vector tipPos(tPos.x, tPos.y, tPos.z);
+        forwardDir = (tipPos - proximalPos).Normalize();
+        originPos = tipPos; // Move origin to tip for better "laser pointer" feel
+    } else {
+        auto shoulder = head.MultiplyDirection({handeness == Right ? 0.15f : -0.15f, -0.25f, 0.0f});
+        forwardDir = (proximalPos - shoulder).Normalize();
+    }
 
-    auto shoulder = head.MultiplyDirection({handeness == Right ? 0.15f : -0.15f,-0.25,0});
-    auto q = lookAt({filteredPos[0], filteredPos[1], filteredPos[2]}, shoulder);
+    // Pinch Lock Stability
+    bool isPinching = false;
+    double pinchFactor = 0.0;
+    const_cast<OpenXRGestureManagerHandJoints*>(this)->getTriggerPinchStatusAndFactor(mHandJoints, isPinching, pinchFactor);
+    
+    static vrb::Vector lastForward[2] = { {0,0,1}, {0,0,1} };
+    int hIdx = (handeness == Right ? 1 : 0);
+    
+    float blend = std::clamp((float)pinchFactor * 1.2f, 0.0f, 0.98f);
+    forwardDir = (forwardDir * (1.0f - blend) + lastForward[hIdx] * blend).Normalize();
+    lastForward[hIdx] = forwardDir;
+
+    // IMPORTANT: Invert direction for lookAt because Wolvic's ray is on -Z
+    // We point +Z towards the OPPOSITE of forwardDir (pointing at the proximal joint from the tip)
+    auto q = lookAt(originPos, originPos - forwardDir);
     aimPose.orientation = {q.x(), q.y(), q.z(), q.w() };
+    aimPose.position = { originPos.x(), originPos.y(), originPos.z() };
+    
     return aimPose;
 }
 

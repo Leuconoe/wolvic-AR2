@@ -6,7 +6,7 @@
 #include "SystemUtils.h"
 #include "DeviceDelegate.h"
 
-#define HAND_JOINT_FOR_AIM XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT
+#define HAND_JOINT_FOR_AIM XR_HAND_JOINT_INDEX_PROXIMAL_EXT
 
 namespace crow {
 
@@ -136,6 +136,19 @@ XrResult OpenXRInputSource::Initialize()
 
         RETURN_IF_XR_FAILED(OpenXRExtensions::sXrCreateHandTrackerEXT(mSession, &handTrackerInfo,
                                                                       &mHandTracker));
+
+#if defined(SPACES)
+        if (mDeviceType == device::LenovoA3 || mDeviceType == device::Metalense2) {
+            XrReferenceSpaceCreateInfo create{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+            create.poseInReferenceSpace = XrPoseIdentity();
+            create.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+            if (XR_FAILED(xrCreateReferenceSpace(mSession, &create, &mHandTrackingSpace))) {
+                VRB_ERROR("OpenXR: failed to create VIEW space for hand tracking on METALENSE2");
+            } else {
+                VRB_LOG("OpenXR: using VIEW space for hand tracking on METALENSE2");
+            }
+        }
+#endif
 
         mSupportsHandJointsMotionRangeInfo = OpenXRExtensions::IsExtensionSupported(XR_EXT_HAND_JOINTS_MOTION_RANGE_EXTENSION_NAME);
         mSupportsFBHandTrackingAim = OpenXRExtensions::IsExtensionSupported(XR_FB_HAND_TRACKING_AIM_EXTENSION_NAME);
@@ -528,7 +541,7 @@ bool OpenXRInputSource::GetHandTrackingInfo(XrTime predictedDisplayTime, XrSpace
     if (OpenXRExtensions::sXrLocateHandJointsEXT == XR_NULL_HANDLE || mHandTracker == XR_NULL_HANDLE)
         return false;
 
-    // Update hand locations
+    // Update hand locations - Default to localSpace
     XrHandJointsLocateInfoEXT locateInfo { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
     locateInfo.baseSpace = localSpace;
     locateInfo.time = predictedDisplayTime;
@@ -548,15 +561,58 @@ bool OpenXRInputSource::GetHandTrackingInfo(XrTime predictedDisplayTime, XrSpace
     CHECK_XRCMD(OpenXRExtensions::sXrLocateHandJointsEXT(mHandTracker, &locateInfo, &jointLocations));
     mHasHandJoints = jointLocations.isActive;
 #if defined(SPACES)
-    // Bug in Spaces runtime, isActive returns always false, force it to true for the A3 and METALENSE2.
-    // https://gitlab.freedesktop.org/monado/monado/-/issues/263
     if (mDeviceType == device::LenovoA3 || mDeviceType == device::Metalense2)
         mHasHandJoints = true;
 #endif
 
-    // Even if the SDK reports the hand tracking as active we still need to check the validity
-    // of the joint positions to determine if we should render the hands or not. Some SDKs return
-    // isActive as TRUE even if the joints are not valid.
+    if (mHasHandJoints) {
+        vrb::Vector hPos = head.GetTranslation();
+        vrb::Vector pPos(mHandJoints[0].pose.position.x, mHandJoints[0].pose.position.y, mHandJoints[0].pose.position.z);
+
+        // Detect if the runtime is giving us identity (head-relative) coordinates incorrectly in localSpace
+        if (pPos.Magnitude() < 0.01f || (pPos - hPos).Magnitude() < 0.01f) {
+             if (mHandTrackingSpace != XR_NULL_HANDLE) {
+                 XrHandJointsLocateInfoEXT viewLocateInfo { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
+                 viewLocateInfo.baseSpace = mHandTrackingSpace; // This is VIEW space
+                 viewLocateInfo.time = predictedDisplayTime;
+                 
+                 XrHandJointLocationsEXT viewJointLocations { XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
+                 viewJointLocations.jointCount = XR_HAND_JOINT_COUNT_EXT;
+                 viewJointLocations.jointLocations = mHandJoints.data(); // Fill directly into mHandJoints
+                 
+                 if (XR_SUCCEEDED(OpenXRExtensions::sXrLocateHandJointsEXT(mHandTracker, &viewLocateInfo, &viewJointLocations))) {
+                     // Correct for the 'offset to the right' issue by shifting left by 2cm relative to head
+                     vrb::Matrix correction = vrb::Matrix::Translation({-0.02f, 0.0f, 0.0f});
+                     vrb::Matrix headCorrected = head.PostMultiply(correction);
+
+                     for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i) {
+                         vrb::Matrix jointInView = XrPoseToMatrix(mHandJoints[i].pose);
+                         vrb::Matrix jointInLocal = headCorrected.PostMultiply(jointInView);
+                         mHandJoints[i].pose = MatrixToXrPose(jointInLocal);
+                         mHandJoints[i].locationFlags |= (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
+                         
+                         // Sync back to jointLocations for the hasAtLeastOneValidJoint check
+                         jointLocations.jointLocations[i].pose = mHandJoints[i].pose;
+                         jointLocations.jointLocations[i].locationFlags = mHandJoints[i].locationFlags;
+                     }
+                 }
+             }
+        } else {
+            // Data in localSpace seems valid, just sync to mHandJoints
+            for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i) {
+                mHandJoints[i].pose = jointLocations.jointLocations[i].pose;
+                mHandJoints[i].locationFlags = jointLocations.jointLocations[i].locationFlags;
+            }
+        }
+        
+        static int logThrottle = 0;
+        if (logThrottle++ % 90 == 0) {
+            vrb::Vector npPos(mHandJoints[0].pose.position.x, mHandJoints[0].pose.position.y, mHandJoints[0].pose.position.z);
+            VRB_LOG("OpenXR METALENSE | Head: %.2f, %.2f, %.2f | Transformed Palm: %.2f, %.2f, %.2f", 
+                hPos.x(), hPos.y(), hPos.z(), npPos.x(), npPos.y(), npPos.z());
+        }
+    }
+
     auto hasAtLeastOneValidJoint = [](const XrHandJointLocationsEXT& jointLocations) {
         for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i) {
             if (jointLocations.jointLocations[i].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)
@@ -566,11 +622,9 @@ bool OpenXRInputSource::GetHandTrackingInfo(XrTime predictedDisplayTime, XrSpace
     };
     mHasHandJoints = mHasHandJoints && hasAtLeastOneValidJoint(jointLocations);
 
-    // Rest of the method deal with XR_MSFT_hand_tracking_mesh extension
     if (!OpenXRExtensions::IsExtensionSupported(XR_MSFT_HAND_TRACKING_MESH_EXTENSION_NAME) || !mHasHandJoints)
         return mHasHandJoints;
 
-    // Lazily create the XrSpace required by XR_MSFT_hand_tracking_mesh extension.
     if (mHandMeshMSFT.space == XR_NULL_HANDLE) {
         assert(OpenXRExtensions::sXrCreateHandMeshSpaceMSFT != nullptr);
         auto& matrix = vrb::Matrix::Identity().TranslateInPlace(kAverageHeight);
@@ -584,7 +638,6 @@ bool OpenXRInputSource::GetHandTrackingInfo(XrTime predictedDisplayTime, XrSpace
                                                                  &mHandMeshMSFT.space));
     }
 
-    // Bail if hand mesh buffer sizes haven't yet been initialized
     if (mHandMeshMSFT.handMesh.indexBuffer.indexCapacityInput == 0)
         return mHasHandJoints;
 
@@ -606,8 +659,6 @@ bool OpenXRInputSource::GetHandTrackingInfo(XrTime predictedDisplayTime, XrSpace
         CHECK_XRCMD(OpenXRExtensions::sXrUpdateHandMeshMSFT(mHandTracker, &updateInfo,
                                                             &mHandMeshMSFT.handMesh));
         mHandMeshMSFT.buffer = genericBuffer;
-
-        // Finally add the current buffer to the list of used ones
         mHandMeshMSFT.usedBuffers.push_back(buffer);
     }
 
@@ -622,8 +673,10 @@ OpenXRInputSource::PopulateHandJointLocations(device::RenderMode renderMode, std
         vrb::Matrix transform = XrPoseToMatrix(mHandJoints[i].pose);
         bool positionIsValid = IsHandJointPositionValid((XrHandJointEXT) i, mHandJoints);
         if (positionIsValid) {
+#if !defined(SPACES)
             if (renderMode == device::RenderMode::StandAlone)
                 transform.TranslateInPlace(kAverageHeight);
+#endif
         } else {
             // This effectively hides the joint.
             transform.ScaleInPlace(vrb::Vector(0.0f, 0.0f, 0.0f));
