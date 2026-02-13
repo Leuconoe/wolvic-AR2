@@ -379,6 +379,9 @@ struct DeviceDelegateOpenXR::State {
     CHECK_XRCMD(xrEnumerateSwapchainFormats(session, (uint32_t)swapchainFormats.size(), &swapchainFormatCount,
                                             swapchainFormats.data()));
     VRB_LOG("OpenXR Available color formats: %d", swapchainFormatCount);
+    for (uint32_t i = 0; i < swapchainFormatCount; i++) {
+        VRB_LOG("  OpenXR Format[%d]: 0x%lx", i, (long)swapchainFormats[i]);
+    }
   }
 
   bool SupportsColorFormat(int64_t aColorFormat) {
@@ -513,7 +516,7 @@ struct DeviceDelegateOpenXR::State {
   }
 
   XrSwapchainCreateInfo GetSwapChainCreateInfo(uint32_t w = 0, uint32_t h = 0) {
-#if OCULUSVR || PFDMXR
+#if OCULUSVR || PFDMXR || SPACES
     const int64_t colorFormat = GL_SRGB8_ALPHA8;
 #else
     const int64_t colorFormat = GL_RGBA8;
@@ -537,6 +540,7 @@ struct DeviceDelegateOpenXR::State {
     info.arraySize = 1;
     info.sampleCount = viewConfig.front().recommendedSwapchainSampleCount;
     info.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+    VRB_LOG("OpenXR Creating swapchain: format=0x%lx, width=%d, height=%d, sampleCount=%d", (long)info.format, info.width, info.height, info.sampleCount);
     return info;
   }
 
